@@ -1,17 +1,37 @@
 import torch
-from torch_geometric.data import DataLoader
+from torch_geometric.data import Batch
 from torch_geometric.nn import VGAE, GCNConv
-from torch_geometric.utils import train_test_split_edges
 from torch_geometric.transforms import RandomLinkSplit
+import pandas as pd
 import os
-import umap
-import matplotlib.pyplot as plt
 
-# Load processed data
-graph_data = torch.load("processed_apartment_graphs.pt", weights_only=False)
+# ----------- Load Graph Data -----------
+
+graph_data = torch.load("Data/Output/processed_apartment_graphs.pt", weights_only=False)
 print(f"Loaded {len(graph_data)} graphs.")
 
-# Define VGAE model
+# Filter graphs with valid edge_index
+graph_data = [
+    g for g in graph_data
+    if hasattr(g, 'edge_index') and isinstance(g.edge_index, torch.Tensor)
+    and g.edge_index.dim() == 2 and g.edge_index.size(1) > 0
+]
+print(f"Filtered to {len(graph_data)} graphs with valid edges.")
+
+# Merge graphs into one big batch
+full_batch = Batch.from_data_list(graph_data)
+
+# Save layout_area_type labels for visualization
+if hasattr(full_batch, "layout_area_type"):
+    layout_labels = full_batch.layout_area_type.cpu().numpy()
+    labels_df = pd.DataFrame({"layout_area_type": layout_labels})
+    labels_df.to_csv("Data/Output/node_labels_filtered.csv", index=False)
+    print("✅ Saved filtered node labels to 'node_labels_filtered.csv'")
+else:
+    print("\u26a0\ufe0f layout_area_type attribute not found on the batch.")
+
+# ----------- Define VGAE Model -----------
+
 class GCNEncoder(torch.nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -23,7 +43,8 @@ class GCNEncoder(torch.nn.Module):
         x = self.conv1(x, edge_index).relu()
         return self.conv_mu(x, edge_index), self.conv_logstd(x, edge_index)
 
-# VGAE training loop
+# ----------- Train and Eval Functions -----------
+
 def train(model, optimizer, data):
     model.train()
     optimizer.zero_grad()
@@ -33,39 +54,35 @@ def train(model, optimizer, data):
     optimizer.step()
     return loss.item()
 
-# Prepare a single large batch (merge all graphs)
-graph_data = [
-    g for g in graph_data
-    if hasattr(g, 'edge_index') and isinstance(g.edge_index, torch.Tensor)
-    and g.edge_index.dim() == 2 and g.edge_index.size(1) > 0
-]
-print(f"Filtered to {len(graph_data)} graphs with valid edges.")
+def evaluate(model, data):
+    model.eval()
+    with torch.no_grad():
+        z = model.encode(data.x, data.edge_index)
+        return model.recon_loss(z, data.edge_index).item()
 
-from torch_geometric.data import Batch
-full_batch = Batch.from_data_list(graph_data)
+# ----------- Prepare Data -----------
 
-# Split edges for VGAE training
 transform = RandomLinkSplit(is_undirected=True, split_labels=True, add_negative_train_samples=True)
 train_data, val_data, test_data = transform(full_batch)
 
-# Init model
 in_channels = full_batch.num_node_features
 model = VGAE(GCNEncoder(in_channels, 32))
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-# Train
+# ----------- Training Loop -----------
+
 for epoch in range(1, 201):
     loss = train(model, optimizer, train_data)
     if epoch % 20 == 0:
-        print(f"Epoch {epoch:03d}, Loss: {loss:.4f}")
+        val_loss = evaluate(model, val_data)
+        print(f"Epoch {epoch:03d}, Train Loss: {loss:.4f}, Val Loss: {val_loss:.4f}")
 
-# Encode final embeddings
+# ----------- Save Final Embeddings and Model -----------
+
 model.eval()
 with torch.no_grad():
     z = model.encode(train_data.x, train_data.edge_index)
 
-torch.save(z, "latent_node_embeddings.pt")
-
-# Save embeddings
-torch.save(z, "latent_node_embeddings.pt")
-print("Saved latent embeddings to 'latent_node_embeddings.pt'")
+torch.save(z, "Data/Output/latent_node_embeddings.pt")
+torch.save(model.state_dict(), "Data/Output/vgae_model.pth")
+print("\u2705 Saved VGAE model and latent embeddings.")
