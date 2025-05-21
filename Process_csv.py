@@ -11,16 +11,14 @@ import csv
 # ----------- CONFIGURATION -----------
 PARTITION_DIR = "Data/merged"
 PARTITION_FILES = [f for f in os.listdir(PARTITION_DIR) if f.endswith(".csv")]
-FEATURES = ['layout_area', 'layout_compactness', 'layout_is_navigable',
-            'view_sky_p80', 'sun_201806211200_median', 'noise_traffic_day']
+FEATURES = ['building_footprint_area', 'number_of_floors', 'floor_area', 'number_of_units']
+LABEL_COLUMN = 'dwelling_type'
+
 OUTPUT_DIR = "Data/Output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ----------- GLOBAL INIT -----------
-label_writer_initialized = False
-global_labels = []  # collect all types before fitting LabelEncoder
+# ----------- HELPER FUNCTIONS -----------
 
-# ----------- HELPERS -----------
 def load_partition(file_path):
     df = pd.read_csv(file_path)
     df['geometry'] = df['geometry'].apply(wkt.loads)
@@ -45,31 +43,40 @@ def build_apartment_graphs(gdf):
         graphs[apt_id] = G
     return graphs
 
-def graph_to_pyg(graph, le):
+def graph_to_pyg(graph):
     node_ids = list(graph.nodes())
     node_attrs = [graph.nodes[n] for n in node_ids]
 
     def safe_get(k, default=0.0): return [n.get(k, default) for n in node_attrs]
+
     feature_tensors = [torch.tensor(safe_get(f), dtype=torch.float) for f in FEATURES]
     feature_tensors += [
         torch.tensor(safe_get('centroid_x'), dtype=torch.float),
         torch.tensor(safe_get('centroid_y'), dtype=torch.float)
     ]
+
     x = torch.stack(feature_tensors, dim=1)
 
-    raw_types = [n.get('layout_area_type', 'unknown') for n in node_attrs]
-    y = torch.tensor(le.transform(raw_types), dtype=torch.long)
+    # Encode dwelling_type
+    types = [n.get(LABEL_COLUMN, 'unknown') for n in node_attrs]
+    le = LabelEncoder()
+    y = torch.tensor(le.fit_transform(types), dtype=torch.long)
 
     global label_writer_initialized
     if not label_writer_initialized:
         with open(os.path.join(OUTPUT_DIR, "node_labels_filtered.csv"), "w", newline='') as f:
-            csv.writer(f).writerow(['layout_area_type'])
+            writer = csv.writer(f)
+            writer.writerow([LABEL_COLUMN])
         label_writer_initialized = True
 
     with open(os.path.join(OUTPUT_DIR, "node_labels_filtered.csv"), "a", newline='') as f:
         writer = csv.writer(f)
-        for label in raw_types:
+        for label in types:
             writer.writerow([label])
+
+    with open(os.path.join(OUTPUT_DIR, "label_classes.txt"), "w") as f:
+        for c in le.classes_:
+            f.write(c + "\n")
 
     edge_index = []
     for src, dst in graph.edges():
@@ -77,48 +84,41 @@ def graph_to_pyg(graph, le):
         dst_idx = node_ids.index(dst)
         edge_index.append([src_idx, dst_idx])
         edge_index.append([dst_idx, src_idx])
+
     if not edge_index:
         return None
 
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
     data = Data(x=x, edge_index=edge_index, y=y)
-    data.layout_area_type = y
+    data.dwelling_type = y
     return data
 
-# ----------- MAIN WORKFLOW -----------
-def process_all_partitions():
-    all_data, all_types = [], []
-    raw_graphs = []
+# ----------- MAIN LOOP -----------
 
+label_writer_initialized = False
+
+def process_all_partitions():
+    all_data = []
     for filename in PARTITION_FILES:
         print(f"Processing {filename}")
-        gdf = load_partition(os.path.join(PARTITION_DIR, filename))
+        file_path = os.path.join(PARTITION_DIR, filename)
+        gdf = load_partition(file_path)
         graphs = build_apartment_graphs(gdf)
-        for graph in graphs.values():
-            raw_types = [n[1].get('layout_area_type', 'unknown') for n in graph.nodes(data=True)]
-            all_types.extend(raw_types)
-            raw_graphs.append(graph)
 
-    le = LabelEncoder()
-    le.fit(all_types)
-    print(f"✅ Found {len(le.classes_)} layout types")
+        for apt_id, graph in graphs.items():
+            try:
+                pyg_graph = graph_to_pyg(graph)
+                if pyg_graph is not None:
+                    all_data.append(pyg_graph)
+            except Exception as e:
+                print(f"Skipping {apt_id} due to error: {e}")
 
-    with open(os.path.join(OUTPUT_DIR, "label_classes.txt"), "w") as f:
-        for cls in le.classes_:
-            f.write(f"{cls}\n")
-
-    final_graphs = []
-    for graph in raw_graphs:
-        try:
-            pyg = graph_to_pyg(graph, le)
-            if pyg:
-                final_graphs.append(pyg)
-        except Exception as e:
-            print(f"⚠️ Skipped graph due to error: {e}")
-    print(f"✅ Final processed graphs: {len(final_graphs)}")
-    return final_graphs
+    print(f"Total processed graphs: {len(all_data)}")
+    return all_data
 
 # ----------- ENTRY POINT -----------
+
 if __name__ == "__main__":
-    torch.save(process_all_partitions(), os.path.join(OUTPUT_DIR, "processed_apartment_graphs.pt"))
+    data_list = process_all_partitions()
+    torch.save(data_list, os.path.join(OUTPUT_DIR, "processed_apartment_graphs.pt"))
     print("✅ Saved: processed_apartment_graphs.pt")
