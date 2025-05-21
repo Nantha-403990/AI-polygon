@@ -50,7 +50,6 @@ def build_apartment_graphs(gdf):
     return graphs
 
 def graph_to_pyg(graph):
-def graph_to_pyg(graph):
     node_ids = list(graph.nodes())
     node_attrs = [graph.nodes[n] for n in node_ids]
 
