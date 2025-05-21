@@ -85,4 +85,4 @@ with torch.no_grad():
 
 torch.save(z, "Data/Output/latent_node_embeddings.pt")
 torch.save(model.state_dict(), "Data/Output/vgae_model.pth")
-print("\u2705 Saved VGAE model and latent embeddings.")
+print(" Saved VGAE model and latent embeddings.")
