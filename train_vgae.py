@@ -26,9 +26,9 @@ if hasattr(full_batch, "layout_area_type"):
     layout_labels = full_batch.layout_area_type.cpu().numpy()
     labels_df = pd.DataFrame({"layout_area_type": layout_labels})
     labels_df.to_csv("Data/Output/node_labels_filtered.csv", index=False)
-    print(" Saved filtered node labels to 'node_labels_filtered.csv'")
+    print("✅ Saved filtered node labels to 'node_labels_filtered.csv'")
 else:
-    print(" layout_area_type attribute not found on the batch.")
+    print("\u26a0\ufe0f layout_area_type attribute not found on the batch.")
 
 # ----------- Define VGAE Model -----------
 
@@ -85,4 +85,4 @@ with torch.no_grad():
 
 torch.save(z, "Data/Output/latent_node_embeddings.pt")
 torch.save(model.state_dict(), "Data/Output/vgae_model.pth")
-print("Saved VGAE model and latent embeddings.")
+print("\u2705 Saved VGAE model and latent embeddings.")
