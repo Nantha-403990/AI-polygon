@@ -5,6 +5,7 @@ import torch
 import networkx as nx
 from shapely import wkt
 from torch_geometric.data import Data
+from sklearn.preprocessing import LabelEncoder
 import csv
 
 # ----------- CONFIGURATION -----------
@@ -13,15 +14,14 @@ PARTITION_FILES = [f for f in os.listdir(PARTITION_DIR) if f.endswith(".csv")]
 OUTPUT_DIR = "Data/Output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Updated feature list matching final Swiss dataset requirements
-FEATURES = [
+# ----------- FEATURES (includes dwelling_type as categorical) -----------
+NUMERIC_FEATURES = [
     'building_footprint_area',
     'number_of_floors',
     'floor_area',
     'number_of_units'
 ]
-
-# ----------- HELPER FUNCTIONS -----------
+CATEGORICAL_FEATURES = ['dwelling_type']  # included as a feature now
 
 def load_partition(file_path):
     df = pd.read_csv(file_path)
@@ -40,29 +40,44 @@ def build_apartment_graphs(gdf):
         G = nx.Graph()
         for _, row in group.iterrows():
             G.add_node(row['area_id_geom'], **row.to_dict())
-
         for i, r1 in group.iterrows():
             for j, r2 in group.iloc[i+1:].iterrows():
                 if r1['geometry'].intersects(r2['geometry']):
                     G.add_edge(r1['area_id_geom'], r2['area_id_geom'])
-
         graphs[apt_id] = G
     return graphs
 
-def graph_to_pyg(graph):
+def graph_to_pyg(graph, layout_le, dwelling_le):
     node_ids = list(graph.nodes())
     node_attrs = [graph.nodes[n] for n in node_ids]
 
     def safe_get(k, default=0.0): return [n.get(k, default) for n in node_attrs]
 
-    feature_tensors = [torch.tensor(safe_get(f), dtype=torch.float) for f in FEATURES]
-    feature_tensors += [
-        torch.tensor(safe_get('centroid_x'), dtype=torch.float),
-        torch.tensor(safe_get('centroid_y'), dtype=torch.float)
-    ]
+    # Handle numeric features
+    feature_tensors = [torch.tensor(safe_get(f), dtype=torch.float) for f in NUMERIC_FEATURES]
+
+    # Handle encoded dwelling_type
+    dwelling_vals = safe_get('dwelling_type', default='unknown')
+    dwelling_encoded = torch.tensor(dwelling_le.transform(dwelling_vals), dtype=torch.float)
+    feature_tensors.append(dwelling_encoded)
+
+    # Add centroid coordinates
+    feature_tensors.append(torch.tensor(safe_get('centroid_x'), dtype=torch.float))
+    feature_tensors.append(torch.tensor(safe_get('centroid_y'), dtype=torch.float))
 
     x = torch.stack(feature_tensors, dim=1)
 
+    # Handle label (layout_area_type)
+    layout_vals = safe_get('layout_area_type', default='unknown')
+    y = torch.tensor(layout_le.transform(layout_vals), dtype=torch.long)
+
+    # Save raw labels for visualization
+    with open(os.path.join(OUTPUT_DIR, "node_labels_filtered.csv"), "a", newline='') as f:
+        writer = csv.writer(f)
+        for label in layout_vals:
+            writer.writerow([label])
+
+    # Edges
     edge_index = []
     for src, dst in graph.edges():
         src_idx = node_ids.index(src)
@@ -74,32 +89,53 @@ def graph_to_pyg(graph):
         return None
 
     edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-
-    data = Data(x=x, edge_index=edge_index)
+    data = Data(x=x, edge_index=edge_index, y=y)
+    data.layout_area_type = y
     return data
 
-# ----------- MAIN LOOP -----------
 def process_all_partitions():
     all_data = []
+    all_layout_labels = []
+    all_dwelling_labels = []
+    raw_graphs = []
+
+    # Initialize CSV header
+    with open(os.path.join(OUTPUT_DIR, "node_labels_filtered.csv"), "w", newline='') as f:
+        csv.writer(f).writerow(['layout_area_type'])
+
     for filename in PARTITION_FILES:
         print(f"Processing {filename}")
-        file_path = os.path.join(PARTITION_DIR, filename)
-        gdf = load_partition(file_path)
+        gdf = load_partition(os.path.join(PARTITION_DIR, filename))
         graphs = build_apartment_graphs(gdf)
+        for graph in graphs.values():
+            node_attrs = [n[1] for n in graph.nodes(data=True)]
+            all_layout_labels.extend([n.get('layout_area_type', 'unknown') for n in node_attrs])
+            all_dwelling_labels.extend([n.get('dwelling_type', 'unknown') for n in node_attrs])
+            raw_graphs.append(graph)
 
-        for apt_id, graph in graphs.items():
-            try:
-                pyg_graph = graph_to_pyg(graph)
-                if pyg_graph is not None:
-                    all_data.append(pyg_graph)
-            except Exception as e:
-                print(f"Skipping {apt_id} due to error: {e}")
+    layout_le = LabelEncoder()
+    dwelling_le = LabelEncoder()
+    layout_le.fit(all_layout_labels)
+    dwelling_le.fit(all_dwelling_labels)
 
-    print(f"Total processed graphs: {len(all_data)}")
+    with open(os.path.join(OUTPUT_DIR, "label_classes.txt"), "w") as f:
+        for cls in layout_le.classes_:
+            f.write(f"{cls}\n")
+
+    print(f"✅ Found {len(layout_le.classes_)} layout_area_type classes")
+    print(f"✅ Found {len(dwelling_le.classes_)} dwelling_type categories")
+
+    for graph in raw_graphs:
+        try:
+            pyg = graph_to_pyg(graph, layout_le, dwelling_le)
+            if pyg:
+                all_data.append(pyg)
+        except Exception as e:
+            print(f"⚠️ Skipped graph due to error: {e}")
+
+    print(f"✅ Final processed graphs: {len(all_data)}")
     return all_data
 
-# ----------- ENTRY POINT -----------
 if __name__ == "__main__":
-    data_list = process_all_partitions()
-    torch.save(data_list, os.path.join(OUTPUT_DIR, "processed_apartment_graphs.pt"))
-    print("\u2705 Saved: processed_apartment_graphs.pt")
+    torch.save(process_all_partitions(), os.path.join(OUTPUT_DIR, "processed_apartment_graphs.pt"))
+    print("✅ Saved: processed_apartment_graphs.pt")
