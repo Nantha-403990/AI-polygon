@@ -50,7 +50,7 @@ for epoch in range(1, 501):
     else:
         patience_counter += 1
         if patience_counter >= patience:
-            print("🛑 Early stopping triggered.")
+            print("Early stopping triggered.")
             break
 
 # Save embeddings

@@ -7,10 +7,10 @@ from graph_decoder import generate_layout_graph
 # Settings
 LATENT_DIM = 32
 NODE_FEATURE_DIM = 33
-SAMPLE_SIZE = 8
+SAMPLE_SIZE = 50
 
 # Generate a graph
-graph = generate_layout_graph(z_dim=LATENT_DIM, out_node_dim=NODE_FEATURE_DIM, sample_size=SAMPLE_SIZE)
+graph = generate_layout_graph(z_dim=LATENT_DIM, out_node_dim=NODE_FEATURE_DIM, total_nodes=SAMPLE_SIZE)
 
 # Save to CSV
 df = pd.DataFrame(graph.x.detach().numpy())

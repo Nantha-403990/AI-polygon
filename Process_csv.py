@@ -135,8 +135,8 @@ def process_all_partitions():
         for cls in layout_le.classes_:
             f.write(f"{cls}\n")
 
-    print(f"✅ Found {len(layout_le.classes_)} layout_area_type classes")
-    print(f"✅ Found {len(subtype_le.classes_)} entity_subtype classes")
+    print(f"Found {len(layout_le.classes_)} layout_area_type classes")
+    print(f"Found {len(subtype_le.classes_)} entity_subtype classes")
 
     for graph in raw_graphs:
         try:
@@ -152,4 +152,4 @@ def process_all_partitions():
 
 if __name__ == "__main__":
     torch.save(process_all_partitions(), os.path.join(OUTPUT_DIR, "processed_apartment_graphs.pt"))
-    print("✅ Saved: processed_apartment_graphs.pt")
+    print("Saved: processed_apartment_graphs.pt")
