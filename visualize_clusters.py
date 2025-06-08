@@ -2,15 +2,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# Load label class names from file
+def load_label_classes(path):
+    with open(path, 'r') as f:
+        return [line.strip() for line in f.readlines()]
+
+label_classes = load_label_classes("Data/Output/label_classes.txt")
+
 # Load UMAP projection and clustering labels
 umap_df = pd.read_csv("Data/Output/umap_embeddings.csv")
 cluster_labels = pd.read_csv("Data/Output/embedding_clusters.csv")["cluster"]
 
-# Combine for easier plotting
+# Combine for UMAP scatter plot
 dumap_clustered = umap_df.copy()
 dumap_clustered["cluster"] = cluster_labels
 
-# Plot
+# Plot UMAP
 plt.figure(figsize=(10, 7))
 sns.scatterplot(data=dumap_clustered, x="UMAP1", y="UMAP2", hue="cluster", palette="tab10", s=20)
 plt.title("UMAP Projection of Node Embeddings with KMeans Clusters")
@@ -21,27 +28,32 @@ plt.tight_layout()
 plt.grid(True)
 plt.show()
 
-
-# Load data
+# Load label and cluster assignments
 labels_df = pd.read_csv("Data/Output/node_labels_filtered.csv")
 clusters_df = pd.read_csv("Data/Output/embedding_clusters.csv")
 
-# Combine into a single DataFrame
+# Add clusters to the label data
 merged_df = labels_df.copy()
 merged_df["cluster"] = clusters_df["cluster"]
 
-# Count occurrences of each label per cluster
-cluster_summary = merged_df.groupby("cluster")["layout_area_type"].value_counts().unstack(fill_value=0)
+# Map layout_area_type IDs to actual label names
+merged_df["layout_area_type_name"] = merged_df["layout_area_type"].apply(
+    lambda x: label_classes[int(x)] if int(x) < len(label_classes) else f"Unknown ({x})"
+)
 
-# Save the summary to CSV
-cluster_summary.to_csv("Data/Output/cluster_label_distribution.csv")
-print("✅ Saved cluster-label breakdown to cluster_label_distribution.csv")
+# Count layout label names per cluster
+cluster_summary_named = merged_df.groupby("cluster")["layout_area_type_name"].value_counts().unstack(fill_value=0)
 
-# Visualize as heatmap
+# Save as CSV
+cluster_summary_named.to_csv("Data/Output/cluster_label_distribution_named.csv")
+print("✅ Saved cluster-label breakdown with names to cluster_label_distribution_named.csv")
+
+# Heatmap with names
 plt.figure(figsize=(12, 8))
-sns.heatmap(cluster_summary, annot=True, fmt="d", cmap="YlGnBu")
-plt.title("Room Type Distribution per Cluster")
+sns.heatmap(cluster_summary_named, annot=True, fmt="d", cmap="YlGnBu")
+plt.title("Room Type Distribution per Cluster (Named Labels)")
 plt.ylabel("Cluster")
 plt.xlabel("Layout Area Type")
+plt.xticks(rotation=45)
 plt.tight_layout()
 plt.show()

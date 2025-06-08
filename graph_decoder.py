@@ -37,8 +37,8 @@ class GraphDecoder(nn.Module):
         return x_recon, edge_index
 
 
-def generate_layout_graph(z_dim, out_node_dim, sample_size=10):
+def generate_layout_graph(z_dim, out_node_dim, total_nodes=7282):
     decoder = GraphDecoder(latent_dim=z_dim, out_node_dim=out_node_dim)
-    z_sample = torch.randn((sample_size, z_dim))
+    z_sample = torch.randn((total_nodes, z_dim))  # full latent vector sampling
     x_gen, edge_index_gen = decoder(z_sample)
     return Data(x=x_gen, edge_index=edge_index_gen)
