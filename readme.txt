@@ -130,7 +130,7 @@ pip install torch torch_geometric pandas matplotlib seaborn umap-learn networkx 
 ---
 
 ## 👤 Maintainers
-- Nanthakumarr s, {add your names as well}
+- Nanthakumarr s, Najmunsaquib Shaikh
 - Collaborators: RMIT x Earlybuild
 
 For support or collaboration, please raise an issue or contact the project owner.
